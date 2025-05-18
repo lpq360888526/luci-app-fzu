@@ -1,0 +1,69 @@
+#!/bin/sh
+
+IFCONFIG="$(uci get fzu.config.interface 2>/dev/null)"
+[ -z "$IFCONFIG" ] && IFCONFIG="eth1"  # 默认值 eth1
+USER_ACCOUNT="$(uci get fzu.config.user_account)"
+USER_PASSWORD="$(uci get fzu.config.user_password)"
+TIME="$(uci get fzu.config.time)"
+response_file="/tmp/response.txt"
+log_file="/tmp/log/fzu.log"
+
+portal() {
+    rm "$response_file"
+    echo "用户名：$1" >> "$log_file"
+    echo "密码：$2" >> "$log_file"
+    
+    # 新的认证请求
+    curl "http://172.16.0.46/eportal/InterFace.do?method=login" \
+      -H "Accept: */*" \
+      -H "Accept-Language: zh-CN,zh;q=0.9" \
+      -H "Connection: keep-alive" \
+      -H "Content-Type: application/x-www-form-urlencoded; charset=UTF-8" \
+      -H "Cookie: EPORTAL_COOKIE_OPERATORPWD=; EPORTAL_COOKIE_SERVER=; EPORTAL_AUTO_LAND=; EPORTAL_COOKIE_DOMAIN=; EPORTAL_COOKIE_SAVEPASSWORD=true; EPORTAL_COOKIE_USERNAME=$1; EPORTAL_COOKIE_NEWV=true; EPORTAL_COOKIE_PASSWORD=$(echo -n "$2" | sha256sum | awk '{print $1}'); EPORTAL_COOKIE_SERVER_NAME=; EPORTAL_USER_GROUP=%E6%9C%AC%E4%B8%93%E7%A7%91%E7%94%9F%E7%BB%84; JSESSIONID=9B90639906480BE81DA87E1C1847EF70" \
+      -H "Origin: http://172.16.0.46" \
+      -H "Referer: http://172.16.0.46/eportal/index.jsp?wlanuserip=5c8d94a9f3272b9e9bbaf1a5ac998b24&wlanacname=913f3a4fe38d5b0a9b374f4ab7e7e3b8&ssid=&nasip=43c7f0d6b4d9ae9d8f9534ab6a0c7e49&snmpagentip=&mac=6a3c9f1b7f8e4adf8f527aa6f26b8b9a&t=wireless-v3&url=a93b1b71e6a442bb94a93d041bf1c689d34f90ed01a57f62&apmac=&nasid=913f3a4fe38d5b0a9b374f4ab7e7e3b8&vid=907ba167b4a11824&port=9f3b6be67d61ac3a&nasportid=15b9c13f7e8990bc24e8b7633e3c1bfc2ab8b8a3a9c8719ad870ea8e5f3d1e5b" \
+      -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36" \
+      --data-raw "userId=$1&password=$2&service=&queryString=wlanuserip%253D5c8d94a9f3272b9e9bbaf1a5ac998b24%2526wlanacname%253D913f3a4fe38d5b0a9b374f4ab7e7e3b8%2526ssid%253D%2526nasip%253D898690b1b48638ecfc6c4835b13d9dc8%2526snmpagentip%253D%2526mac%253D6a3c9f1b7f8e4adf8f527aa6f26b8b9a%2526t%253Dwireless-v2%2526url%253Da93b1b71e6a442bb94a93d041bf1c689d34f90ed01a57f62%2526apmac%253D%2526nasid%253D913f3a4fe38d5b0a9b374f4ab7e7e3b8%2526vid%253D907ba167b4a11824%2526port%253D9f3b6be67d61ac3a%2526nasportid%253D15b9c13f7e8990bc24e8b7633e3c1bfc2ab8b8a3a9c8719ad870ea8e5f3d1e5b&operatorPwd=&operatorUserId=&validcode=&passwordEncrypt=false" \
+     -o "$response_file"
+
+    response=$(cat "$response_file")
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 服务器返回：$response" >> "$log_file"
+}
+
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始运行" >> "$log_file"
+
+while true; do
+    # 检查网络连接
+    while true; do
+        if curl -s --head --max-time 5 https://www.baidu.com | head -n 1 | grep -q "200 OK"; then
+            sleep $TIME
+        else
+            log_line_count=$(wc -l < "$log_file")
+            if [ "$log_line_count" -gt 200 ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 日志达到上限200行，已覆盖" > "$log_file"
+            fi
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] 网络异常，进行二次网络监测，避免误测" >> "$log_file"
+            sleep 3
+            break
+        fi
+    done
+
+    while true; do
+        if curl -s --head --max-time 5 https://www.baidu.com | head -n 1 | grep -q "200 OK"; then
+            break
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] 网络异常，发起认证请求..." >> "$log_file"
+            # 这里调用认证函数 `portal`
+            portal $USER_ACCOUNT $USER_PASSWORD
+            sleep 3
+            
+            if curl -s --head --max-time 5 https://www.baidu.com | head -n 1 | grep -q "200 OK"; then
+                echo "认证成功！！" >> "$log_file"
+            else
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 认证失败，重试..." >> "$log_file"
+            fi  
+        fi
+    done
+done
+
